@@ -87,11 +87,50 @@ class QuotaSetsController(wsgi.Controller):
     @extensions.expected_errors(403)
     def show(self, req, id):
         context = req.environ['nova.context']
-        authorize_show(context)
+        """ id is made equivalent to project_id for better readability"""
+        project_id=id
         params = urlparse.parse_qs(req.environ.get('QUERY_STRING', ''))
         user_id = params.get('user_id', [None])[0]
+        parent_id=None
+        if hasattr(context, 'auth_token') and hasattr(context, 'project_id'):
+            if(context.auth_token and context.project_id):
+                token = context.auth_token
+                headers = {"X-Auth-Token": token,
+                           "Content-type": "application/json",
+                           "Accept": "text/json"}
+                params = {}
+                auth_host = KEYSTONE_CONF.keystone_authtoken.auth_host
+                auth_port = int(KEYSTONE_CONF.keystone_authtoken.auth_port)
+                auth_server = '%s:%s' % (auth_host,auth_port)
+
+                """ The keytsone output for the following url is used for
+                checking whether the given project is a root project or not """
+
+                auth_url = '/%s/%s/%s' % ("v3","projects",project_id)
+                conn = httplib.HTTPConnection(auth_server)
+                conn.request("GET", auth_url, json.dumps(params), headers=headers)
+                response = conn.getresponse()
+                data = response.read()
+                data = json.loads(data)
+                if not "project" in data:
+                     raise webob.exc.HTTPForbidden()
+                try:
+                    parent_id = data["project"]["parent_id"]
+                except:
+                    pass
+
         try:
-            nova.context.authorize_project_context(context, id)
+            if parent_id:
+                if context.project_id ==parent_id:
+                    target = {"project_id":parent_id}
+                    authorize_show(context,target)
+                    nova.context.authorize_project_context(context,parent_id)
+                else:
+                    target = {"project_id":project_id}
+                    authorize_show(context,target)
+                    nova.context.authorize_project_context(context,project_id)
+            else:
+                nova.context.authorize_project_context(context,project_id)
             return self._format_quota_set(id,
                     self._get_quotas(context, id, user_id=user_id))
         except exception.Forbidden:
