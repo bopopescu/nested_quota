@@ -132,7 +132,7 @@ class QuotaSetsController(wsgi.Controller):
         except exception.Forbidden:
             raise webob.exc.HTTPForbidden()
 
-    """@wsgi.serializers(xml=QuotaTemplate)
+    @wsgi.serializers(xml=QuotaTemplate)
     def update(self, req, id, body):
         context = req.environ['nova.context']
         authorize_update(context)
@@ -157,7 +157,7 @@ class QuotaSetsController(wsgi.Controller):
             user_id = params.get('user_id', [None])[0]
 
         try:
-            #settable_quotas = QUOTAS.get_settable_quotas(context, project_id,
+            settable_quotas = QUOTAS.get_settable_quotas(context, project_id,
                                                          user_id=user_id)
             pass
         except exception.Forbidden:
@@ -211,147 +211,8 @@ class QuotaSetsController(wsgi.Controller):
             except exception.AdminRequired:
                 raise webob.exc.HTTPForbidden()
         values = self._get_quotas(context, id, user_id=user_id)
-        return self._format_quota_set(None, values)"""
-###########
-  
-    @wsgi.serializers(xml=QuotaTemplate)
-    def update(self, req, id, body):
-        context = req.environ['nova.context']
-        project_id = id
-        # code for getting the immediate child projects
-        child_list=[]
-        parent_id="c0ef42e3da1f4169af5eb33543aaa438"
-        if hasattr(context, 'auth_token') and hasattr(context, 'project_id'):
-            if(context.auth_token and context.project_id):
-              
-                token=context.auth_token
-                headers = {"X-Auth-Token": token,
-                           "Content-type": "application/json",
-                           "Accept": "text/json"}
-                params={}
-
-                auth_host = KEYSTONE_CONF.keystone_authtoken.auth_host
-                auth_port = int(KEYSTONE_CONF.keystone_authtoken.auth_port)
-                auth_server = '%s:%s' % (auth_host,auth_port)
-                conn = httplib.HTTPConnection(auth_server)
-                auth_url='/%s/%s/%s' % ("v3","projects",project_id)
-                conn.request("GET", auth_url, json.dumps(params), headers=headers)
-                response = conn.getresponse()
-                data = response.read()
-                data=json.loads(data)
-                try:
-                    parent_id= data["project"]["parent_id"]
-                except:
-                    pass
-                parent_id="c0ef42e3da1f4169af5eb33543aaa438"
-                parent_id="c0ef42e3da1f4169af5eb33543aaa438"
-                if parent_id:
-                    auth_url='/%s/%s/%s/%s' % ("v3","projects",parent_id,"?subtree")
-                else:
-                    auth_url='/%s/%s/%s/%s' % ("v3","projects",project_id,"?subtree")
-                parent_id="c0ef42e3da1f4169af5eb33543aaa438"            
-                if parent_id:
-                    authorize_update(context)
-                else:
-                    authorize_root_update(context)
-                conn.request("GET", auth_url, json.dumps(params), headers=headers)
-                response = conn.getresponse()
-                data = response.read()
-                data=json.loads(data)
-                subtree=data["project"]["subtree"]
-                for item in subtree:
-                   project_info=item["project"]
-                   try:
-                       if project_info["parent_id"]==parent_id:
-                           child_list.append(project_info["id"])
-                   except:
-                       pass
-        if id not in child_list:
-             raise exception.InvalidParent(parent_id=parent_id,project_id=project_id)
-
-        bad_keys = []
-
-
-        # By default, we can force update the quota if the extended
-        # is not loaded
-        force_update = True
-        extended_loaded = False
-        if self.ext_mgr.is_loaded('os-extended-quotas'):
-            # force optional has been enabled, the default value of
-            # force_update need to be changed to False
-            extended_loaded = True
-            force_update = False
-
-        user_id = None
-        if self.ext_mgr.is_loaded('os-user-quotas'):
-            # Update user quotas only if the extended is loaded
-            params = urlparse.parse_qs(req.environ.get('QUERY_STRING', ''))
-            user_id = params.get('user_id', [None])[0]
-
-        try:
-            # settable_quotas = QUOTAS.get_settable_quotas(context, project_id,
-                                                         parent_id,
-                                                         user_id=user_id)
-            pass
-        except exception.Forbidden:
-            raise webob.exc.HTTPForbidden()
-
-        if not self.is_valid_body(body, 'quota_set'):
-            msg = _("quota_set not specified")
-            raise webob.exc.HTTPBadRequest(explanation=msg)
-        quota_set = body['quota_set']
-        for key, value in quota_set.items():
-            if (key not in self.supported_quotas
-                and key not in NON_QUOTA_KEYS):
-                bad_keys.append(key)
-                continue
-            if key == 'force' and extended_loaded:
-                # only check the force optional when the extended has
-                # been loaded
-                force_update = strutils.bool_from_string(value)
-            elif key not in NON_QUOTA_KEYS and value:
-                try:
-                    value = utils.validate_integer(value, key)
-                except exception.InvalidInput as e:
-                    raise webob.exc.HTTPBadRequest(
-                        explanation=e.format_message())
-
-        LOG.debug("force update quotas: %s", force_update)
-
-        if bad_keys:
-            msg = _("Bad key(s) %s in quota_set") % ",".join(bad_keys)
-            raise webob.exc.HTTPBadRequest(explanation=msg)
-
-        for key, value in quota_set.items():
-            if key in NON_QUOTA_KEYS or (not value and value != 0):
-                continue
-            # validate whether already used and reserved exceeds the new
-            # quota, this check will be ignored if admin want to force
-            # update
-            value = int(value)
-            if not force_update:
-               # minimum = settable_quotas[key]['minimum']
-               # maximum = settable_quotas[key]['maximum']
-                minimum=100
-                maximum=300
-                self._validate_quota_limit(key, value, minimum, maximum)
-
-            try:
-                objects.Quotas.create_limit(context, project_id,
-                                            key, value, user_id=user_id)
-            except exception.QuotaExists:
-                objects.Quotas.update_limit(context, project_id,
-                                            key, value, user_id=user_id)
-            except exception.AdminRequired:
-                raise webob.exc.HTTPForbidden()
-        if parent_id:
-            db.quota_allocated_update(context, parent_id,child_list)
-        else:
-            db.quota_allocated_update(context,project_id,child_list)
-
-        values = self._get_quotas(context, id, user_id=user_id)
         return self._format_quota_set(None, values)
-###############
+
     @wsgi.serializers(xml=QuotaTemplate)
     def defaults(self, req, id):
         context = req.environ['nova.context']
@@ -359,7 +220,7 @@ class QuotaSetsController(wsgi.Controller):
         values = QUOTAS.get_defaults(context)
         return self._format_quota_set(id, values)
 
-    """ def delete(self, req, id):
+    def delete(self, req, id):
         if self.ext_mgr.is_loaded('os-extended-quotas'):
             context = req.environ['nova.context']
             authorize_delete(context)
@@ -376,48 +237,6 @@ class QuotaSetsController(wsgi.Controller):
                     QUOTAS.destroy_all_by_project(context, id)
                 return webob.Response(status_int=202)
             except exception.Forbidden:
-                raise webob.exc.HTTPForbidden()
-        raise webob.exc.HTTPNotFound()"""
-    def delete(self, req, id):
-        if self.ext_mgr.is_loaded('os-extended-quotas'):
-            context = req.environ['nova.context']
-            parent_id=context.parent_id
-            body='{"quota_set":{"instances":"0"},\
-                              :{"cores":"0"}, \
-                              :{"floating_ips":"0"}, \
-                              :{"fixed_ips":"0"}, \
-                              :{"metadata_items":"0"}, \
-                              :{"injected_files":"0"}, \
-                              :{"injected_file_content_bytes":"0"}, \
-                              :{"injected_file_path_bytes":"0"}, \
-                              :{"quota_security_groups":"0"}, \
-                              :{"quota_security_group_rules":"0"}, \
-                              :{"quota_key_pairs":"0"}, \
-                              :{"reservation_expire":"0"}, \
-                              :{"quota_key_pairs":"0"}, \
-                              :{"until_refresh":"0"}, \
-                              :{"max_age":"0"}, \
-                              :{"quota_driver":"0"}}'
-
-            if(parent_id):
-                authorize_delete(context)
-            else:
-                authorize_root_delete(context)
-            params = urlparse.parse_qs(req.environ.get('QUERY_STRING', ''))
-            user_id = params.get('user_id', [None])[0]
-            if user_id and not self.ext_mgr.is_loaded('os-user-quotas'):
-                raise webob.exc.HTTPNotFound()
-            try:
-                nova.context.authorize_project_context(context, id)
-                if user_id:
-                    QUOTAS.destroy_all_by_project_and_user(context,
-                                                           id, user_id)
-                    return webob.Response(status_int=202)
-                else:
-                    #QUOTAS.destroy_all_by_project(context, id)
-                    update(req, id, body)
-              
-            except exception.NotAuthorized:
                 raise webob.exc.HTTPForbidden()
         raise webob.exc.HTTPNotFound()
     
